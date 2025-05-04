@@ -1,29 +1,6 @@
-import threading
-from itertools import cycle
-from enum import Enum, auto
-from time import sleep
 import pygame
-import client
 import host
-
-
-class Mark(Enum):
-    EMPTY = auto()
-    X = auto()
-    O = auto()
-
-
-class GameState(Enum):
-    PLAYING = auto()
-    WAITING = auto()
-    WON = auto()
-    TIE = auto()
-
-
-class GameType(Enum):
-    HOST = auto()
-    PLAYER = auto()
-    SPECTATOR = auto()
+from board import Board
 
 
 def draw_x(rect):
@@ -50,22 +27,64 @@ def draw_o(rect):
     screen.blit(downscaled, rect)
 
 
-def draw_mark(mark, rect):
-    side = min(rect.height, rect.width)
+def draw_mark(mark, rectangle):
+    side = min(rectangle.height, rectangle.width)
     square = pygame.Rect(0, 0, side, side)
-    square.center = rect.center
+    square.center = rectangle.center
     match mark:
-        case Mark.X:
+        case 1:
             draw_x(square)
-        case Mark.O:
+        case 2:
             draw_o(square)
 
 
-class Player:
-    def __init__(self, name, mark):
-        self.name = name
-        self.mark = mark
-        self.score = 0
+class ClientBoard(Board):
+    def __init__(self):
+        self.rectangles = self.create_rectangles()
+        self.cell_pos = (-1,-1)
+        super().__init__()
+
+    def reset(self):
+        super().reset()
+        self.draw_board()
+
+    @staticmethod
+    def create_rectangles():
+        rectangles = []
+        y = SCORE_TAB_HEIGHT + CELL_GAP
+        for _ in range(BOARD_SIZE):
+            x = CELL_GAP
+            row = []
+            for _ in range(BOARD_SIZE):
+                rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
+                pygame.rect.Rect()
+                row.append(rect)
+                x += CELL_SIZE + CELL_GAP
+            rectangles.append(row)
+            y += CELL_SIZE + CELL_GAP
+
+        return rectangles
+
+    def clicked(self, pos):
+        for index, (row, column) in enumerate(self.empty_cells):
+            rectangle = self.rectangles[row][column]
+            if rectangle.collidepoint(pos):
+                self.cell_pos = (row, column)
+                return True
+        return False
+
+    def get_cell(self):
+        return self.cell_pos
+
+    def draw_board(self):
+        for row in range(BOARD_SIZE):
+            for column in range(BOARD_SIZE):
+                pygame.draw.rect(screen, (255, 255, 255), self.rectangles[row][column])
+
+    def draw_mark(self, row, column):
+        rect = self.rectangles[row][column]
+        mark = self.matrix[row][column]
+        draw_mark(mark, rect)
 
 
 class ScoreTab:
@@ -95,139 +114,59 @@ class ScoreTab:
             self.draw_score(player)
 
 
-class Board:
-    def __init__(self):
-        self.matrix = []
-        self.empty_cells = []
-        self.cell_pos = ()
-        self.rectangles = self.create_rectangles()
-        self.reset()
-
-    def reset(self):
-        self.draw_board()
-        self.matrix = [[Mark.EMPTY for _ in range(BOARD_SIZE)] for _ in range(BOARD_SIZE)]
-        self.empty_cells = [(i, j) for j in range(BOARD_SIZE) for i in range(BOARD_SIZE)]
-
-    def place(self, row, column, mark):
-        self.matrix[row][column] = mark
-        self.empty_cells.remove((row, column))
-
-    @staticmethod
-    def create_rectangles():
-        rectangles = []
-        y = SCORE_TAB_HEIGHT+CELL_GAP
-        for _ in range(BOARD_SIZE):
-            x = CELL_GAP
-            row = []
-            for _ in range(BOARD_SIZE):
-                rect = pygame.Rect(x, y, CELL_SIZE, CELL_SIZE)
-                pygame.rect.Rect()
-                row.append(rect)
-                x += CELL_SIZE+CELL_GAP
-            rectangles.append(row)
-            y += CELL_SIZE+CELL_GAP
-
-        return rectangles
-
-    def clicked(self, pos):
-        for index, (row, column) in enumerate(self.empty_cells):
-            rectangle = self.rectangles[row][column]
-            if rectangle.collidepoint(pos):
-                self.cell_pos = (row, column)
-                return True
-        return False
-
-    def get_cell(self):
-        return self.cell_pos
-
-    def check_win(self, mark):
-        lr_diagonal_win = True
-        rl_diagonal_win = True
-        tie = True
-        for i in range(BOARD_SIZE):
-            if self.matrix[i][i] != mark:
-                lr_diagonal_win = False
-            if self.matrix[i][BOARD_SIZE - (1+i)] != mark:
-                rl_diagonal_win = False
-            if self.matrix[i][0] == Mark.EMPTY and self.matrix[0][i] == Mark.EMPTY:
-                continue
-            row_win = True
-            column_win = True
-            for j in range(BOARD_SIZE):
-                if self.matrix[i][j] == Mark.EMPTY:
-                    tie = False
-                if self.matrix[i][j] != mark:
-                    row_win = False
-                if self.matrix[j][i] != mark:
-                    column_win = False
-            if row_win:
-                return GameState.WON
-            elif column_win:
-                return GameState.WON
-        if lr_diagonal_win:
-            return GameState.WON
-        if rl_diagonal_win:
-            return GameState.WON
-        if tie:
-            return GameState.TIE
-
-        return GameState.PLAYING
-
-    def draw_board(self):
-        for row in range(BOARD_SIZE):
-            for column in range(BOARD_SIZE):
-                pygame.draw.rect(screen, (255, 255, 255), self.rectangles[row][column])
-
-    def draw_mark(self, row, column):
-        rect = self.rectangles[row][column]
-        mark = self.matrix[row][column]
-        draw_mark(mark, rect)
-
-
-class Game:
-    def __init__(self, gametype, room):
-        self.board = Board()
+class Client:
+    def __init__(self, room):
+        self.board = ClientBoard()
         self.room = room
-        players = [Player('Player 1', Mark.X), Player('Player 2', Mark.O)]
-        self.players = cycle(players)
-        self.score = ScoreTab(players)
-        self.player = next(self.players)
-        if gametype == GameType.HOST:
-            self.game_state = GameState.PLAYING
-        elif gametype == GameType.PLAYER:
-            self.game_state = GameState.WAITING
-            self.wait_move()
+        self.my_turn = False
+        self.current_turn = 0
+        self.message = ''
+
+        self.room.on_turn = self.turn
+        self.room.on_move = self.move
+        self.room.on_chat = self.show_chat
+        self.room.on_match = self.match
+        self.room.on_win = self.win
+        self.room.on_tie = self.tie
+
+    def win(self, winner):
+        print(winner)
+
+    def tie(self):
+        print('tie')
+
+    def match(self, player1, player2, first):
+        self.board.reset()
+        print(f'[MATCH]{player1} Vs. {player2}')
+        self.current_turn = first
+
+    def turn(self):
+        self.my_turn = True
 
     def click(self, pos):
-        if self.game_state != GameState.PLAYING:
+        if not self.my_turn:
             return
         if self.board.clicked(pos):
+            self.my_turn = False
             row, column = self.board.get_cell()
             self.room.send_move(row, column)
-            self.move(row, column)
+
+    def write_chat(self, letter):
+        self.message += letter
+
+    def send_chat(self):
+        room.send_chat(self.message)
+        self.message = ''
+
+    def show_chat(self, nick, content):
+        print(f'[CHAT]{nick}: {content}')
 
     def move(self, row, column):
-        self.board.place(row, column, self.player.mark)
+        self.board.place(row, column, self.current_turn)
         self.board.draw_mark(row, column)
-        match self.board.check_win(self.player.mark):
-            case GameState.WON:
-                self.player.score += 1
-                self.score.draw_score(self.player)
-                sleep(0.5)
-                self.board.reset()
-            case GameState.TIE:
-                self.board.reset()
-            case GameState.PLAYING:
-                self.game_state = GameState.WAITING
-                self.player = next(self.players)
-                self.wait_move()
-
-    def wait_move(self):
-        def waiting():
-            row, column = self.room.wait_move()
-            self.move(row, column)
-            self.game_state = GameState.PLAYING
-        threading.Thread(target=waiting, daemon=True).start()
+        self.current_turn += 1
+        if self.current_turn == 3:
+            self.current_turn = 1
 
 
 SCORE_TAB_HEIGHT = 30
@@ -241,14 +180,15 @@ screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 clock = pygame.time.Clock()
 
 option = input('1-HOST\n2-ENTER ROOM\nSELECT AN OPTION: ')
+room_name = input('Enter The Room Name: ')
+nick = input('Enter Your Nickname: ')
 if option == '1':
-    room = host.HostRoom()
-    game = Game(GameType.HOST, room)
-    print('a')
+    host.HostRoom(room_name)
+    room = host.enter_room(room_name, nick)
+    game = Client(room)
 if option == '2':
-    room = host.ClientRoom()
-    game = Game(GameType.PLAYER, room)
-    print('b')
+    room = host.enter_room(room_name, nick)
+    game = Client(room)
 
 
 running = True
@@ -259,8 +199,14 @@ while running:
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_ESCAPE:
                 running = False
+            if event.unicode.isalpha():
+                game.write_chat(event.unicode)
+            if event.key == pygame.K_RETURN:
+                game.send_chat()
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if event.button == 1:
                 game.click(pygame.mouse.get_pos())
     pygame.display.update()
     clock.tick(60)
+pygame.quit()
+room.close()
